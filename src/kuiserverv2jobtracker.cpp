@@ -11,7 +11,7 @@
 #include "jobviewv3iface.h"
 #include "debug.h"
 
-#include <kjob.h>
+#include <KJob>
 
 #include <QtGlobal>
 #include <QDBusConnection>
@@ -96,7 +96,6 @@ void KUiServerV2JobTrackerPrivate::sendUpdate(JobView &view)
 
 void KUiServerV2JobTrackerPrivate::updateDestUrl(KJob *job)
 {
-    const QVariant destUrl = job->property("destUrl");
     scheduleUpdate(job, QStringLiteral("destUrl"), job->property("destUrl").toString());
 }
 
@@ -111,7 +110,7 @@ void KUiServerV2JobTrackerPrivate::requestView(KJob *job, const QString &desktop
     // Must not clear currentState as only Plasma 5.22+ will use properties from "hints",
     // there must still be a full update() call for earlier versions!
 
-    if (job->property("transientProgressReporting").toBool()) {
+    if (job->isFinishedNotificationHidden()) {
         hints.insert(QStringLiteral("transient"), true);
     }
 
@@ -209,12 +208,26 @@ void KUiServerV2JobTracker::registerJob(KJob *job)
 
                 const auto oldState = view.currentState;
 
-                delete view.jobView;
-                d->jobViews.remove(job);
+                // It is possible that the KJob has been deleted already so do not
+                // use or deference if marked as terminated
+                if (oldState.value(QStringLiteral("terminated")).toBool()) {
+                    const uint errorCode = oldState.value(QStringLiteral("errorCode")).toUInt();
+                    const QString errorMessage = oldState.value(QStringLiteral("errorMessage")).toString();
 
-                registerJob(job);
+                    if (view.jobView) {
+                        view.jobView->terminate(errorCode, errorMessage, QVariantMap() /*hints*/);
+                    }
 
-                d->jobViews[job].currentState = oldState;
+                    delete view.jobView;
+                    d->jobViews.remove(job);
+                } else {
+                    delete view.jobView;
+                    d->jobViews.remove(job); // must happen before registerJob
+
+                    registerJob(job);
+
+                    d->jobViews[job].currentState = oldState;
+                }
             }
         });
     }
